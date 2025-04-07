@@ -1,8 +1,9 @@
-// server/database/schema/index.js
-const { users } = require('./users');
-const { couples } = require('./couples');
+import { users } from './users.js';
+import { couples } from './couples.js';
+import { db } from '../drizzle.js';
 
-module.exports = {
+export {
   users,
-  couples
+  couples,
+  db
 };

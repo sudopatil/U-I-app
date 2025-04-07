@@ -1,8 +1,8 @@
-const { drizzle } = require('drizzle-orm/mysql2');
-const mysql = require('mysql2/promise');
-// const { users, couples } = require('./schema');
+import 'dotenv/config';
 
-const { users, couples } = require('./schema/index.js'); // With index.js
+import { drizzle } from 'drizzle-orm/mysql2';
+import mysql from 'mysql2/promise';
+import { users, couples } from './schema/index.js';
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -11,7 +11,7 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME,
 });
 
-module.exports.db = drizzle(pool, { 
+export const db = drizzle(pool, {
   schema: { users, couples },
-  mode: 'default'
+  mode: 'default',
 });

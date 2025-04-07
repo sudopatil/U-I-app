@@ -1,7 +1,7 @@
-const { mysqlTable, int, boolean, varchar, mysqlEnum, date, datetime } = require('drizzle-orm/mysql-core');
-const { couples } = require('./couples.js');
+import { mysqlTable, int, boolean, varchar, mysqlEnum, date, datetime } from 'drizzle-orm/mysql-core';
+import { couples } from './couples.js';
 
-const users = mysqlTable('users', {
+export const users = mysqlTable('users', {
   id: int('id').primaryKey().autoincrement(),
   couple_id: int('couple_id').references(() => couples.id),
   is_first_partner: boolean('is_first_partner').default(false),
@@ -15,8 +15,5 @@ const users = mysqlTable('users', {
   verification_token: varchar('verification_token', { length: 255 }),
   verification_expires_at: datetime('verification_expires_at'),
   verified: boolean('verified').default(false),
-  // Consider using a dynamic default if available (e.g., .defaultNow())
   created_at: datetime('created_at').default(new Date().toISOString()),
 });
-
-module.exports = { users };

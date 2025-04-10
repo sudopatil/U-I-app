@@ -11,6 +11,86 @@ import { and, eq } from 'drizzle-orm';
 const ONE_YEAR = 365 * 24 * 60 * 60 * 1000;
 const SALT_ROUNDS = 10;
 
+const verificationEmailTemplate = (firstName, verifyUrl) => `
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        .email-container { max-width: 600px; margin: auto; padding: 20px; 
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+        .header { color: #2b6cb0; font-size: 26px; text-align: center; 
+                padding: 20px 0; border-bottom: 2px solid #e2e8f0; }
+        .content { margin: 25px 0; line-height: 1.6; color: #4a5568; }
+        .button { background: #2b6cb0; color: white !important; padding: 14px 28px;
+                text-decoration: none; border-radius: 6px; display: inline-block;
+                font-weight: 500; margin: 20px 0; transition: opacity 0.3s; }
+        .button:hover { opacity: 0.9; }
+        .footer { margin-top: 30px; font-size: 0.9em; color: #718096;
+                text-align: center; }
+        .code { background: #f8fafc; padding: 12px; border-radius: 4px;
+                word-break: break-all; margin: 15px 0; }
+        .notice { color: #718096; font-size: 0.9em; margin-top: 25px; }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">Welcome to U&I! 🌟</div>
+        <div class="content">
+            <p>Hi ${firstName},</p>
+            <p>We're excited to have you on board! To get started, please verify your email address:</p>
+            
+            <div style="text-align: center;">
+                <a href="${verifyUrl}" class="button">Verify Email Address</a>
+            </div>
+
+            <p>Or copy this link to your browser:</p>
+            <div class="code">${verifyUrl}</div>
+            
+            <p class="notice">This verification link will expire in 1 year.</p>
+        </div>
+        <div class="footer">
+            <p>Best regards,<br>The U&I Team</p>
+            <p style="margin-top: 15px;">Need help? Contact us at 
+                <a href="mailto:support@uandi.com">support@uandi.com</a></p>
+        </div>
+    </div>
+</body>
+</html>
+`;
+
+export const verificationPageTemplate = (message, isSuccess) => `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Email Verification</title>
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; 
+            background: #f8fafc; margin: 0; padding: 2rem; }
+        .container { max-width: 800px; margin: 3rem auto; padding: 2.5rem;
+            background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            text-align: center; }
+        .icon { font-size: 4rem; margin-bottom: 1.5rem; }
+        .success { color: #2b6cb0; border: 2px solid #bee3f8; }
+        .error { color: #e53e3e; border: 2px solid #fed7d7; }
+        .message { font-size: 1.2rem; line-height: 1.6; margin: 1.5rem 0; }
+        .button { background: #2b6cb0; color: white; padding: 12px 24px;
+                text-decoration: none; border-radius: 6px; display: inline-block;
+                margin-top: 1.5rem; }
+    </style>
+</head>
+<body>
+    <div class="container ${isSuccess ? 'success' : 'error'}">
+        <div class="icon">${isSuccess ? '✅' : '⚠️'}</div>
+        <h1>${isSuccess ? 'Verification Successful!' : 'Verification Failed'}</h1>
+        <div class="message">${message}</div>
+        ${isSuccess ? 
+            '<a href="/login" class="button">Continue to Login</a>' : 
+            '<a href="/support" class="button">Get Help</a>'}
+    </div>
+</body>
+</html>
+`;
+
 // Set up Nodemailer (Gmail + App Password recommended)
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -145,16 +225,25 @@ export async function registerUser(payload) {
 
     const verifyUrl = `${process.env.APP_URL}/api/verify?userId=${insertedId}&token=${verificationToken}`;
     console.log('registerUser: Sending verification email to:', email, 'with URL:', verifyUrl);
+    // await transporter.sendMail({
+    //   from: process.env.EMAIL_USER,
+    //   to: email,
+    //   subject: 'U&I - Verify Your Email',
+    //   html: `
+    //     <h2>Welcome to U&I!</h2>
+    //     <p>Please click the link below to verify your email:</p>
+    //     <a href="${verifyUrl}">Verify Email</a>
+    //   `,
+    // });
+
     await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+      from: `"U&I Support" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: 'U&I - Verify Your Email',
-      html: `
-        <h2>Welcome to U&I!</h2>
-        <p>Please click the link below to verify your email:</p>
-        <a href="${verifyUrl}">Verify Email</a>
-      `,
+      subject: 'Verify Your U&I Account',
+      html: verificationEmailTemplate(firstName, verifyUrl),
+      text: `Verify your email: ${verifyUrl}\nThis link expires in 1 year.`
     });
+
     console.log('registerUser: Verification email sent successfully');
 
     return {
@@ -180,23 +269,138 @@ export async function registerUser(payload) {
  * - If user isFirstPartner = false, and they are verified, updates the couples row to 'verified'.
  */
 
+// export async function verifyUser(userId, token) {
+//   console.log('verifyUser: Received userId:', userId, 'and token:', token);
+
+//   try {
+//     return await db.transaction(async (tx) => {
+//       // --- PHASE 1: Retrieve and validate user ---
+//       const userArray = await tx.select()
+//         .from(users)
+//         .where(eq(users.id, Number(userId)));
+      
+//       console.log('verifyUser: Retrieved user array:', userArray);
+//       const foundUser = userArray[0];
+
+//       if (!foundUser) throw new Error('User not found');
+//       if (foundUser.verified) throw new Error('User already verified');
+//       if (foundUser.verification_token !== token) throw new Error('Invalid token');
+//       if (foundUser.verification_expires_at < new Date()) throw new Error('Token expired');
+
+//       // --- PHASE 2: Mark user as verified ---
+//       console.log('verifyUser: Marking user as verified');
+//       await tx.update(users)
+//         .set({
+//           verified: true,
+//           verification_token: null,
+//           verification_expires_at: null,
+//         })
+//         .where(eq(users.id, foundUser.id));
+
+//       // --- PHASE 3: Handle couple verification ---
+//       if (foundUser.is_first_partner && !foundUser.couple_id) {
+//         console.log('verifyUser: Creating new couple for first partner');
+//         const invitationCode = generateInvitationCode();
+
+//         // Insert new couple
+//         await tx.insert(couples).values({
+//           verificationStatus: 'pending',
+//           invitationToken: invitationCode,
+//         });
+
+//         // Retrieve newly created couple
+//         const [newCouple] = await tx.select()
+//           .from(couples)
+//           .where(and(
+//             eq(couples.invitationToken, invitationCode),
+//             eq(couples.verificationStatus, 'pending')
+//           ))
+//           .limit(1);
+
+//         if (!newCouple) throw new Error('Couple creation failed');
+
+//         // Link user to couple
+//         await tx.update(users)
+//           .set({ couple_id: newCouple.id })
+//           .where(eq(users.id, foundUser.id));
+
+//         // Send invitation email
+//         await transporter.sendMail({
+//           from: process.env.EMAIL_USER,
+//           to: foundUser.email,
+//           subject: 'U&I - Partner Invitation Code',
+//           html: `Your invitation code: ${invitationCode}`
+//         });
+
+//         return {
+//           status: 200,
+//           message: `Verification complete. Invitation code sent to ${foundUser.email}`
+//         };
+//       }
+
+//       if (!foundUser.is_first_partner && foundUser.couple_id) {
+//         console.log('verifyUser: Finalizing couple verification');
+//         const updateResult = await tx.update(couples)
+//           .set({ verificationStatus: 'verified' })
+//           .where(eq(couples.id, foundUser.couple_id));
+
+//         if (updateResult.rowsAffected === 0) {
+//           throw new Error('Couple verification failed');
+//         }
+
+//         return {
+//           status: 200,
+//           message: 'Couple verification completed successfully'
+//         };
+//       }
+
+//       // Default return for non-coupled users
+//       return { status: 200, message: 'Email verification completed' };
+//     });
+//   } catch (error) {
+//     console.error('Error in verifyUser:', error);
+//     return {
+//       status: error.code === 'ER_PARSE_ERROR' ? 400 : 500,
+//       message: 'Verification failed: ' + error.message,
+//       error: error.message
+//     };
+//   }
+// }
+
 export async function verifyUser(userId, token) {
   console.log('verifyUser: Received userId:', userId, 'and token:', token);
 
   try {
     return await db.transaction(async (tx) => {
       // --- PHASE 1: Retrieve and validate user ---
-      const userArray = await tx.select()
+      const [foundUser] = await tx.select()
         .from(users)
         .where(eq(users.id, Number(userId)));
-      
-      console.log('verifyUser: Retrieved user array:', userArray);
-      const foundUser = userArray[0];
 
-      if (!foundUser) throw new Error('User not found');
-      if (foundUser.verified) throw new Error('User already verified');
-      if (foundUser.verification_token !== token) throw new Error('Invalid token');
-      if (foundUser.verification_expires_at < new Date()) throw new Error('Token expired');
+      console.log('verifyUser: Retrieved user:', foundUser);
+
+      if (!foundUser) {
+        console.warn('User not found with ID:', userId);
+        throw new Error('Invalid verification link');
+      }
+
+      if (foundUser.verified) {
+        console.log('User already verified:', userId);
+        return {
+          status: 200,
+          message: 'Account is already verified'
+        };
+      }
+
+      if (foundUser.verification_token !== token) {
+        console.warn('Token mismatch for user:', userId);
+        throw new Error('Invalid verification link');
+      }
+
+      if (foundUser.verification_expires_at < new Date()) {
+        console.warn('Expired token for user:', userId);
+        throw new Error('Verification link has expired');
+      }
 
       // --- PHASE 2: Mark user as verified ---
       console.log('verifyUser: Marking user as verified');
@@ -209,70 +413,64 @@ export async function verifyUser(userId, token) {
         .where(eq(users.id, foundUser.id));
 
       // --- PHASE 3: Handle couple verification ---
+      let responseMessage = 'Email verification completed';
+
       if (foundUser.is_first_partner && !foundUser.couple_id) {
-        console.log('verifyUser: Creating new couple for first partner');
+        console.log('Creating new couple for first partner');
         const invitationCode = generateInvitationCode();
 
-        // Insert new couple
-        await tx.insert(couples).values({
-          verificationStatus: 'pending',
-          invitationToken: invitationCode,
-        });
+        const [newCouple] = await tx.insert(couples)
+          .values({
+            verificationStatus: 'pending',
+            invitationToken: invitationCode,
+          })
+          .returning();
 
-        // Retrieve newly created couple
-        const [newCouple] = await tx.select()
-          .from(couples)
-          .where(and(
-            eq(couples.invitationToken, invitationCode),
-            eq(couples.verificationStatus, 'pending')
-          ))
-          .limit(1);
+        if (!newCouple) {
+          console.error('Couple creation failed for user:', userId);
+          throw new Error('Failed to create couple relationship');
+        }
 
-        if (!newCouple) throw new Error('Couple creation failed');
-
-        // Link user to couple
         await tx.update(users)
           .set({ couple_id: newCouple.id })
           .where(eq(users.id, foundUser.id));
 
         // Send invitation email
         await transporter.sendMail({
-          from: process.env.EMAIL_USER,
+          from: `"U&I" <${process.env.EMAIL_USER}>`,
           to: foundUser.email,
-          subject: 'U&I - Partner Invitation Code',
-          html: `Your invitation code: ${invitationCode}`
+          subject: 'Partner Invitation Code',
+          html: `Your invitation code: <strong>${invitationCode}</strong>`
         });
 
-        return {
-          status: 200,
-          message: `Verification complete. Invitation code sent to ${foundUser.email}`
-        };
+        responseMessage = `Verification complete. Invitation code sent to ${foundUser.email}`;
       }
 
       if (!foundUser.is_first_partner && foundUser.couple_id) {
-        console.log('verifyUser: Finalizing couple verification');
-        const updateResult = await tx.update(couples)
+        console.log('Finalizing couple verification');
+        const [couple] = await tx.update(couples)
           .set({ verificationStatus: 'verified' })
-          .where(eq(couples.id, foundUser.couple_id));
+          .where(eq(couples.id, foundUser.couple_id))
+          .returning();
 
-        if (updateResult.rowsAffected === 0) {
-          throw new Error('Couple verification failed');
+        if (!couple) {
+          console.error('Couple verification failed for user:', userId);
+          throw new Error('Failed to verify couple relationship');
         }
 
-        return {
-          status: 200,
-          message: 'Couple verification completed successfully'
-        };
+        responseMessage = 'Couple verification completed successfully';
       }
 
-      // Default return for non-coupled users
-      return { status: 200, message: 'Email verification completed' };
+      return {
+        status: 200,
+        message: responseMessage
+      };
     });
   } catch (error) {
     console.error('Error in verifyUser:', error);
     return {
-      status: error.code === 'ER_PARSE_ERROR' ? 400 : 500,
-      message: 'Verification failed: ' + error.message,
+      status: error.message.includes('Invalid') ? 400 : 500,
+      message: error.message,
       error: error.message
     };
   }

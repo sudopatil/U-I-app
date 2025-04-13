@@ -1,69 +1,31 @@
-// const express = require('express');
-// const path = require('path');
-// const cookieParser = require('cookie-parser');
-// const logger = require('morgan');
-// require('dotenv').config(); // Add environment variables
 
-// // Routes
-// const indexRouter = require('./routes/index');
-// const usersRouter = require('./routes/users');
-// //const authRouter = require('./routes/auth'); // New auth routes
+// // server/app.js
+// import express from 'express';
+// import cors from 'cors';
+// import { registrationRouter } from './controller/registration.controller.js';
+
+// // If your database is still using CommonJS:
+// import('./database/drizzle.js'); // Dynamic import to load CJS module
 
 // const app = express();
 
-// // Database connection
-// require('./database/drizzle'); // Initialize Drizzle ORM
-
-// // Middleware
-// app.use(logger('dev'));
+// // Use JSON body parser middleware
 // app.use(express.json());
-// app.use(express.urlencoded({ extended: false }));
-// app.use(cookieParser());
-// app.use(express.static(path.join(__dirname, 'public')));
+
+// app.use(cors());
+// app.use(express.json());
 
 // // Routes
-// app.use('/', indexRouter);
-// app.use('/users', usersRouter);
-// //app.use('/api/auth', authRouter); // Add auth endpoints
+// app.use('/api', registrationRouter);
 
-// // Import properly with destructuring
-// //const { transporter } = require('./services/email.service');
-
-// // Test email route
-// app.get('/test-email', async (req, res) => {
-//   try {
-//     const info = await transporter.sendMail({
-//       from: `"Test" <${process.env.SMTP_USER}>`,
-//       to: process.env.SMTP_USER,
-//       subject: 'SMTP Test',
-//       text: 'This is a test email from U&I'
-//     });
-    
-//     console.log('Test email sent:', info.messageId);
-//     res.json({
-//       success: true,
-//       message: `Test email sent to ${process.env.SMTP_USER}`,
-//       etherealInbox: 'https://ethereal.email/login'
-//     });
-    
-//   } catch (error) {
-//     console.error('Email test failed:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Email test failed',
-//       error: error.message,
-//       solution: 'Verify SMTP credentials in .env'
-//     });
-//   }
-// });
-
-// module.exports = app;
+// export default app;
 
 
 // server/app.js
 import express from 'express';
 import cors from 'cors';
 import { registrationRouter } from './controller/registration.controller.js';
+import authRouter from './controller/login.controller.js';
 
 // If your database is still using CommonJS:
 import('./database/drizzle.js'); // Dynamic import to load CJS module
@@ -72,11 +34,10 @@ const app = express();
 
 // Use JSON body parser middleware
 app.use(express.json());
-
 app.use(cors());
-app.use(express.json());
 
 // Routes
 app.use('/api', registrationRouter);
+app.use('/api', authRouter);
 
 export default app;

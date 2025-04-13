@@ -84,7 +84,7 @@ export const verificationPageTemplate = (message, isSuccess) => `
         <h1>${isSuccess ? 'Verification Successful!' : 'Verification Failed'}</h1>
         <div class="message">${message}</div>
         ${isSuccess ? 
-            '<a href="/login" class="button">Continue to Login</a>' : 
+            '<a href="http://localhost:5050/login" class="button">Continue to Login</a>' : 
             '<a href="/support" class="button">Get Help</a>'}
     </div>
 </body>

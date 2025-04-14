@@ -11,6 +11,8 @@ import { and, eq } from 'drizzle-orm';
 const ONE_YEAR = 365 * 24 * 60 * 60 * 1000;
 const SALT_ROUNDS = 10;
 
+const loginUrl = `${process.env.CLIENT_URL}/login`;
+
 const verificationEmailTemplate = (firstName, verifyUrl) => `
 <!DOCTYPE html>
 <html>

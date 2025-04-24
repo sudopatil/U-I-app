@@ -60,13 +60,18 @@ const verificationEmailTemplate = (firstName, verifyUrl) => `
 </html>
 `;
 
+// verificationTemplate.js
+const {
+  LOGIN_URL = 'http://localhost:5050/login', // fallback for local dev
+} = process.env;
+
 export const verificationPageTemplate = (message, isSuccess) => `
 <!DOCTYPE html>
 <html>
 <head>
     <title>Email Verification</title>
     <style>
-        body { font-family: 'Segoe UI', system-ui, sans-serif; 
+        body { font-family: 'Segoe UI', system-ui, sans-serif;
             background: #f8fafc; margin: 0; padding: 2rem; }
         .container { max-width: 800px; margin: 3rem auto; padding: 2.5rem;
             background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);
@@ -85,13 +90,15 @@ export const verificationPageTemplate = (message, isSuccess) => `
         <div class="icon">${isSuccess ? '✅' : '⚠️'}</div>
         <h1>${isSuccess ? 'Verification Successful!' : 'Verification Failed'}</h1>
         <div class="message">${message}</div>
-        ${isSuccess ? 
-            '<a href="http://localhost:5050/login" class="button">Continue to Login</a>' : 
-            '<a href="/support" class="button">Get Help</a>'}
+        ${isSuccess
+          ? `<a href="${LOGIN_URL}" class="button">Continue to Login</a>`
+          : `<a href="/support" class="button">Get Help</a>`
+        }
     </div>
 </body>
 </html>
 `;
+
 
 // Set up Nodemailer (Gmail + App Password recommended)
 const transporter = nodemailer.createTransport({
@@ -116,30 +123,19 @@ function generateInvitationCode() {
   return code;
 }
 
-/**
- * registerUser
- * Expects payload to include:
- * - email
- * - password (plaintext; will be hashed)
- * - firstName
- * - dateOfBirth
- * - gender
- * - role
- * - isFirstPartner (boolean)
- * - invitationToken (only for second partner)
- */
+
 export async function registerUser(payload) {
   console.log('registerUser: Received payload:', payload);
 
   try {
     const {
       email,
-      password, // plaintext password
+      password,        // plaintext password
       firstName,
       dateOfBirth,
       gender,
-      role,
-      isFirstPartner,
+      role,            // 'girlfriend' or 'boyfriend'
+      isFirstPartner,  // boolean
       invitationToken, // only for second partner
     } = payload;
 
@@ -148,44 +144,77 @@ export async function registerUser(payload) {
       throw new Error('Password is required');
     }
 
+    // 1) Hash the password
     console.log('registerUser: Hashing password');
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    console.log('registerUser: Password hashed:', passwordHash);
 
+    // 2) Create verification token + expiry
     const verificationToken = generateVerificationToken();
     const verificationExpiresAt = new Date(Date.now() + ONE_YEAR);
-    console.log('registerUser: Verification expires at:', verificationExpiresAt);
 
+    // 3) If second partner: find the couple & enforce opposite roles
     let coupleId = null;
+
     if (!isFirstPartner) {
-      console.log('registerUser: Looking up couple with invitation token:', invitationToken);
-      
-      const foundCoupleArray = await db
+      if (!invitationToken) {
+        return { status: 400, message: 'Missing invitation code.' };
+      }
+
+      console.log('registerUser: Looking up couple for token:', invitationToken);
+      const found = await db
         .select()
         .from(couples)
         .where(
           and(
-            eq(couples.invitationToken, invitationToken), // Fixed variable name
+            eq(couples.invitationToken, invitationToken),
             eq(couples.verificationStatus, 'pending')
           )
         )
         .limit(1);
 
-      console.log('registerUser: Found couple array:', foundCoupleArray);
-      const foundCouple = foundCoupleArray[0];
-
+      const foundCouple = found[0];
       if (!foundCouple) {
-        console.error('registerUser: No couple found for token:', invitationToken);
+        console.error('registerUser: Invalid or expired invitation code');
         return { status: 400, message: 'Invalid or expired invitation code.' };
       }
+
       coupleId = foundCouple.id;
-      console.log('registerUser: Couple found. couple_id:', coupleId);
+      console.log('registerUser: Couple found. id =', coupleId);
+
+      // fetch first partner's role
+      const firstRows = await db
+        .select({ role: users.role })
+        .from(users)
+        .where(
+          and(
+            eq(users.couple_id, coupleId),
+            eq(users.is_first_partner, true)
+          )
+        )
+        .limit(1);
+
+      if (!firstRows.length) {
+        console.error('registerUser: No first-partner user found');
+        return { status: 400, message: 'Invalid invitation data.' };
+      }
+
+      const firstRole = firstRows[0].role;
+      console.log('registerUser: First partner role is', firstRole);
+
+      if (firstRole === role) {
+        console.error(
+          `registerUser: Role conflict—partner is "${firstRole}", new user tried "${role}"`
+        );
+        return {
+          status: 400,
+          message: `Your role must be opposite of your partner’s. They’re "${firstRole}".`
+        };
+      }
     }
 
-    let insertedUser;
+    // 4) Insert the new user
     let insertedId = null;
-    await db.transaction(async (tx) => {
-      console.log('registerUser: Inserting user into the database');
+    await db.transaction(async tx => {
       const insertResult = await tx.insert(users).values({
         email,
         password_hash: passwordHash,
@@ -199,45 +228,18 @@ export async function registerUser(payload) {
         verification_expires_at: verificationExpiresAt,
         verified: false,
       });
-      console.log('registerUser: Insert result:', insertResult);
-      
-      // Try extracting insertId; adjust based on your insertResult structure.
-      
+
+      // extract the inserted ID
       if (Array.isArray(insertResult)) {
-        insertedId = insertResult[0]?.insertId;
-      } else if (insertResult && typeof insertResult.insertId !== 'undefined') {
+        insertedId = insertResult[0]?.insertId || null;
+      } else if (insertResult.insertId != null) {
         insertedId = insertResult.insertId;
       }
-      console.log('registerUser: Retrieved insertId:', insertedId);
-
-      // if (!insertedId) {
-      //   console.warn('insertedId is undefined; falling back to query by email');
-      //   const userArray = await tx.select().from(users).where(users.email, '=', email);
-      //   insertedUser = userArray[insertedId];
-      // } else {
-      //   const userArray = await tx.select().from(users).where(users.id, '=', insertedId);
-      //   insertedUser = userArray[insertedId];
-      // }
-      // console.log('registerUser: Inserted user retrieved:', insertedUser);
-      // if (!insertedUser) {
-      //   throw new Error('User insert failed: No user returned after insert');
-      // }
     });
 
-
+    // 5) Send verification email
     const verifyUrl = `${process.env.APP_URL}/api/verify?userId=${insertedId}&token=${verificationToken}`;
-    console.log('registerUser: Sending verification email to:', email, 'with URL:', verifyUrl);
-    // await transporter.sendMail({
-    //   from: process.env.EMAIL_USER,
-    //   to: email,
-    //   subject: 'U&I - Verify Your Email',
-    //   html: `
-    //     <h2>Welcome to U&I!</h2>
-    //     <p>Please click the link below to verify your email:</p>
-    //     <a href="${verifyUrl}">Verify Email</a>
-    //   `,
-    // });
-
+    console.log('registerUser: Sending verification email to:', email, 'URL:', verifyUrl);
     await transporter.sendMail({
       from: `"U&I Support" <${process.env.EMAIL_USER}>`,
       to: email,
@@ -246,13 +248,13 @@ export async function registerUser(payload) {
       text: `Verify your email: ${verifyUrl}\nThis link expires in 1 year.`
     });
 
-    console.log('registerUser: Verification email sent successfully');
-
+    console.log('registerUser: Registration & email dispatch complete');
     return {
       status: 200,
       message: 'Registration successful. Check your email to verify.',
       data: { userId: insertedId },
     };
+
   } catch (error) {
     console.error('Error in registerUser:', error);
     return {
@@ -262,6 +264,7 @@ export async function registerUser(payload) {
     };
   }
 }
+
 
 /**
  * verifyUser
@@ -374,38 +377,31 @@ export async function verifyUser(userId, token) {
 
   try {
     return await db.transaction(async (tx) => {
-      // --- PHASE 1: Retrieve and validate user ---
+      // --- PHASE 1: Fetch and validate user ---
       const [foundUser] = await tx.select()
         .from(users)
         .where(eq(users.id, Number(userId)));
 
-      console.log('verifyUser: Retrieved user:', foundUser);
-
       if (!foundUser) {
-        console.warn('User not found with ID:', userId);
-        throw new Error('Invalid verification link');
+        throw new Error('User not found');
       }
 
       if (foundUser.verified) {
-        console.log('User already verified:', userId);
         return {
           status: 200,
-          message: 'Account is already verified'
+          message: 'Account is already verified',
         };
       }
 
       if (foundUser.verification_token !== token) {
-        console.warn('Token mismatch for user:', userId);
-        throw new Error('Invalid verification link');
+        throw new Error('Invalid verification token');
       }
 
       if (foundUser.verification_expires_at < new Date()) {
-        console.warn('Expired token for user:', userId);
-        throw new Error('Verification link has expired');
+        throw new Error('Verification token has expired');
       }
 
       // --- PHASE 2: Mark user as verified ---
-      console.log('verifyUser: Marking user as verified');
       await tx.update(users)
         .set({
           verified: true,
@@ -414,50 +410,55 @@ export async function verifyUser(userId, token) {
         })
         .where(eq(users.id, foundUser.id));
 
-      // --- PHASE 3: Handle couple verification ---
       let responseMessage = 'Email verification completed';
 
+      // --- PHASE 3: Handle couple logic ---
       if (foundUser.is_first_partner && !foundUser.couple_id) {
         console.log('Creating new couple for first partner');
         const invitationCode = generateInvitationCode();
 
-        const [newCouple] = await tx.insert(couples)
-          .values({
-            verificationStatus: 'pending',
-            invitationToken: invitationCode,
-          })
-          .returning();
+        // Insert couple
+        await tx.insert(couples).values({
+          verificationStatus: 'pending',
+          invitationToken: invitationCode,
+        });
+
+        // Retrieve inserted couple
+        const [newCouple] = await tx.select()
+          .from(couples)
+          .where(and(
+            eq(couples.invitationToken, invitationCode),
+            eq(couples.verificationStatus, 'pending')
+          ))
+          .limit(1);
 
         if (!newCouple) {
-          console.error('Couple creation failed for user:', userId);
           throw new Error('Failed to create couple relationship');
         }
 
+        // Link user to couple
         await tx.update(users)
           .set({ couple_id: newCouple.id })
           .where(eq(users.id, foundUser.id));
 
-        // Send invitation email
+        // Send email
         await transporter.sendMail({
           from: `"U&I" <${process.env.EMAIL_USER}>`,
           to: foundUser.email,
-          subject: 'Partner Invitation Code',
-          html: `Your invitation code: <strong>${invitationCode}</strong>`
+          subject: 'U&I - Partner Invitation Code',
+          html: `<p>Your invitation code is: <strong>${invitationCode}</strong></p>`,
         });
 
         responseMessage = `Verification complete. Invitation code sent to ${foundUser.email}`;
       }
 
       if (!foundUser.is_first_partner && foundUser.couple_id) {
-        console.log('Finalizing couple verification');
-        const [couple] = await tx.update(couples)
+        const result = await tx.update(couples)
           .set({ verificationStatus: 'verified' })
-          .where(eq(couples.id, foundUser.couple_id))
-          .returning();
+          .where(eq(couples.id, foundUser.couple_id));
 
-        if (!couple) {
-          console.error('Couple verification failed for user:', userId);
-          throw new Error('Failed to verify couple relationship');
+        if (result.rowsAffected === 0) {
+          throw new Error('Failed to update couple verification status');
         }
 
         responseMessage = 'Couple verification completed successfully';
@@ -465,15 +466,15 @@ export async function verifyUser(userId, token) {
 
       return {
         status: 200,
-        message: responseMessage
+        message: responseMessage,
       };
     });
   } catch (error) {
-    console.error('Error in verifyUser:', error);
+    console.error('❌ Error in verifyUser:', error);
     return {
-      status: error.message.includes('Invalid') ? 400 : 500,
-      message: error.message,
-      error: error.message
+      status: error.message.includes('Invalid') || error.message.includes('expired') ? 400 : 500,
+      message: 'Verification failed: ' + error.message,
+      error: error.message,
     };
   }
 }
